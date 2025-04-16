@@ -44,6 +44,42 @@ export interface Court {
 
 export interface GetCenterDetailsData {
   details: CenterDetails;
-  bookings: Booking[];
   courts: Court[];
+}
+
+export interface GetFiltersValuesResponse {
+  message: string;
+  status: "success" | "error";
+  data?: {
+    [key: string]: FilterDetails;
+  };
+}
+
+export interface FilterDetails {
+  label: string;
+  values: FilterValue[];
+}
+
+export interface FilterValue {
+  value: string;
+  total_items: number;
+}
+
+export enum BookingStatus {
+  PENDING = "PENDING",
+  COMPLETED = "COMPLETED",
+  CANCELLED = "CANCELLED",
+}
+
+export interface PaymentSession {
+  id: string;
+  userId: string;
+  bookingId: string;
+  clientSecret: string;
+  amount: string;
+  paymentMethod: "STRIPE" | "MOMO";
+  paymentSessionId: string;
+  status: "PENDING" | "COMPLETED" | "FAILED";
+  createdAt: string;
+  updatedAt: string | null;
 }

@@ -2,12 +2,19 @@
 
 import React, { useEffect, useState } from 'react';
 import { DayPicker } from 'react-day-picker';
+import { Tooltip } from 'react-tooltip'
 import { format } from 'date-fns';
+import { vi } from 'date-fns/locale'
 import { MapPin, Clock, Users, Phone, Mail, Star, ChevronLeft } from 'lucide-react';
 import 'react-day-picker/dist/style.css';
-import { GetCenterDetailsData } from '@/types/entities';
+import { Booking, Court, GetCenterDetailsData } from '@/types/entities';
 import { Button } from '@/components/ui/button';
 import { useRouter } from 'next/navigation';
+import { commons } from '@/utils';
+import 'react-tooltip/dist/react-tooltip.css'
+import { useMutation, useQuery } from '@tanstack/react-query';
+import { baseAxios } from '@/services/api/baseAxios';
+import { showNotification } from '@/components/ui/error-notification';
 
 const timeSlots = [
   '7:00', '08:00', '09:00', '10:00', '11:00', '12:00', '13:00',
@@ -24,8 +31,72 @@ const CenterClient: React.FC<Props> = ({ data }) => {
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
   const [startTime, setStartTime] = useState<string>('');
   const [endTime, setEndTime] = useState<string>('');
-  const [overlappedBookingCourtIds, setOverlappedBookingCourtIds] = useState<string[]>([]);
+  const [overlappedBookings, setOverlappedBookings] = useState<Booking[]>([]);
   const [onHoverTimeSlot, setOnHoverTimeSlot] = useState<string>('');
+  const [selectedCourt, setSelectedCourt] = useState<Court | null>(null);
+  const { data: bookings, refetch: refetchBookings } = useQuery({
+    queryKey: ['get-center-bookings'],
+    enabled: !!data.details.id,
+    queryFn: async () => {
+      const response = await baseAxios.get(`/centers/${data.details.id}/bookings`, {
+        params: {
+          status: ['PENDING'],
+        }
+      });
+      return response.data as Booking[];
+    },
+    refetchInterval: 60000, // 1 minute
+  })
+  const { mutateAsync: createBooking } = useMutation({
+    mutationFn: async () => {
+      if (startTime === '' || endTime === '' || !selectedCourt) {
+        return;
+      }
+      const startTimeDT = new Date(selectedDate);
+      startTimeDT.setHours(Number(startTime.split(':')[0]));
+      startTimeDT.setMinutes(Number(startTime.split(':')[1]));
+
+      const endTimeDT = new Date(selectedDate);
+      endTimeDT.setHours(Number(endTime.split(':')[0]));
+      endTimeDT.setMinutes(Number(endTime.split(':')[1]));
+
+      const body = {
+        startTime: startTimeDT.getTime(),
+        endTime: endTimeDT.getTime(),
+        courtId: selectedCourt.id,
+        centerId: data.details.id,
+      };
+
+      try {
+        const response = await baseAxios.post(`/bookings`, body) as {
+          message: string;
+          data: Booking;
+          status: 'success' | 'error'; // adj
+        };
+
+        if (response.data.id) {
+          router.push(`/bookings/${response.data.id}`);
+        }
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      } catch (err: any) {
+        //TODO: categorrize error by status code
+        throw new Error(err.response.data.message);
+      }
+    },
+    onSuccess: () => {
+      setStartTime('');
+      setEndTime('');
+      setSelectedCourt(null);
+      refetchBookings();
+    },
+    onError: (error) => {
+      showNotification({
+        title: "Đặt sân không thành công",
+        message: error.message,
+        type: "error",
+      });
+    },
+  })
 
   const handleTimeSlotClick = (time: string) => {
     if (!startTime) {
@@ -62,11 +133,10 @@ const CenterClient: React.FC<Props> = ({ data }) => {
   };
 
   useEffect(() => {
-    // console.log(data.bookings);
-    if (selectedDate && data.bookings.length > 0 && startTime !== "" && endTime !== "") {
-      const overlappedBookingCourtIds: string[] = [];
-      for (let i = 0; i < data.bookings.length; i++) {
-        const a = data.bookings[i];
+    if (selectedDate && bookings && startTime !== "" && endTime !== "") {
+      const overlappedBookings: Booking[] = [];
+      for (let i = 0; i < bookings.length; i++) {
+        const booking = bookings[i];
         const startTimeDT = new Date();
         startTimeDT.setDate(selectedDate.getDate());
         startTimeDT.setMonth(selectedDate.getMonth());
@@ -77,19 +147,24 @@ const CenterClient: React.FC<Props> = ({ data }) => {
         endTimeDT.setMonth(selectedDate.getMonth());
         endTimeDT.setHours(Number(endTime.split(':')[0]));
         endTimeDT.setMinutes(Number(endTime.split(':')[1]));
-        if (Number(new Date(a.startTime).getTime()) < endTimeDT.getTime() && Number(new Date(a.endTime).getTime() > startTimeDT.getTime())) {
-          overlappedBookingCourtIds.push(data.bookings[i].courtId);
+        if (Number(new Date(booking.startTime).getTime()) < endTimeDT.getTime() && Number(new Date(booking.endTime).getTime() > startTimeDT.getTime())) {
+          overlappedBookings.push(bookings[i]);
         }
       }
-      setOverlappedBookingCourtIds(overlappedBookingCourtIds);
+      setOverlappedBookings(overlappedBookings);
     }
-  }, [selectedDate, data.bookings, startTime, endTime]);
+  }, [selectedDate, bookings, startTime, endTime]);
 
   const checkIfPastTime = (time: string) => {
     const currentTime = new Date();
     const selectedTime = new Date(selectedDate);
     selectedTime.setHours(Number(time.split(':')[0]));
     return selectedTime < currentTime;
+  };
+
+  const getCourtBookingInfo = (courtId: string) => {
+    const bookings = overlappedBookings.filter(booking => booking.courtId === courtId);
+    return "2";
   };
 
   return (
@@ -109,33 +184,28 @@ const CenterClient: React.FC<Props> = ({ data }) => {
           {/* Badminton Center Info */}
           <div className="lg:col-span-1">
             <div className="bg-white rounded-lg shadow-lg overflow-hidden">
-              <img
-                src="https://images.unsplash.com/photo-1544979590-37e9b47eb705?auto=format&fit=crop&q=80&w=1000"
-                alt="Badminton Center"
-                className="w-full h-48 object-cover"
-              />
               <div className="p-6">
-                <h1 className="text-2xl font-bold text-gray-900">Elite Badminton Center</h1>
+                {/* <h1 className="text-2xl font-bold text-gray-900">Elite Badminton Center</h1> */}
                 <div className="mt-4 space-y-3">
                   <div className="flex items-center text-gray-600">
                     <MapPin className="h-5 w-5 mr-2" />
-                    <span>123 Sports Avenue, City Center</span>
+                    <span>{data.details.address}, {data.details.district}, {data.details.city}</span>
                   </div>
                   <div className="flex items-center text-gray-600">
                     <Clock className="h-5 w-5 mr-2" />
-                    <span>Open 8:00 AM - 9:00 PM</span>
+                    <span>Mở từ 7:00 tới 23:00 </span>
                   </div>
                   <div className="flex items-center text-gray-600">
                     <Users className="h-5 w-5 mr-2" />
-                    <span>4 Professional Courts</span>
+                    <span>Tổng cộng {data.courts.length} sân</span>
                   </div>
                   <div className="flex items-center text-gray-600">
                     <Phone className="h-5 w-5 mr-2" />
-                    <span>+1 234 567 8900</span>
+                    <span>{commons.formatPhoneNumberDots(data.details.phoneNo)}</span>
                   </div>
                   <div className="flex items-center text-gray-600">
                     <Mail className="h-5 w-5 mr-2" />
-                    <span>info@elitebadminton.com</span>
+                    <span>info@badminton.com</span>
                   </div>
                   <div className="flex items-center text-yellow-500">
                     <Star className="h-5 w-5 mr-1" fill="currentColor" />
@@ -156,8 +226,9 @@ const CenterClient: React.FC<Props> = ({ data }) => {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 {/* Calendar */}
                 <div className="border border-gray-700 rounded-lg p-4">
-                  <h2 className="text-lg font-semibold mb-4">Select Date</h2>
+                  <h2 className="text-lg font-semibold mb-4">Chọn ngày</h2>
                   <DayPicker
+                    locale={vi}
                     disabled={{ before: new Date() }}
                     mode="single"
                     selected={selectedDate}
@@ -170,13 +241,13 @@ const CenterClient: React.FC<Props> = ({ data }) => {
 
                 {/* Time Selection */}
                 <div className="rounded-lg p-4 border border-gray-700">
-                  <h2 className="text-lg font-semibold mb-4">Select Time</h2>
+                  <h2 className="text-lg font-semibold mb-4">Chọn giờ</h2>
                   <p className="text-sm text-white mb-4">
                     {!startTime
-                      ? "Select a start time"
+                      ? "Chọn giờ bắt đầu"
                       : !endTime
-                        ? "Select an end time"
-                        : "Time slot selected"}
+                        ? "Chọn giờ kết thúc"
+                        : `Khung giờ đã chọn: từ ${startTime} đến ${endTime}`}
                   </p>
                   <div className="grid grid-cols-3 gap-2">
                     {timeSlots.map((time) => (
@@ -197,22 +268,33 @@ const CenterClient: React.FC<Props> = ({ data }) => {
 
               {/* Available Courts */}
               <div className="mt-6">
-                <h2 className="text-lg font-semibold mb-4">Available Courts</h2>
+                <h2 className="text-lg font-semibold mb-4">Chọn sân</h2>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                   {data.courts.map((court) => (
                     <div
                       key={court.id}
-                      className={`p-4 rounded-lg border ${!overlappedBookingCourtIds.includes(court.id)
-                        ? 'border-green-500 bg-green-50 cursor-pointer hover:bg-green-100 text-black'
-                        : 'border-red-300 bg-red-50 cursor-not-allowed'
+                      onClick={() => {
+                        if (overlappedBookings.find(booking => booking.courtId === court.id)) {
+                          return;
+                        }
+                        setSelectedCourt(court)
+                      }
+                      }
+                      className={`p-4 rounded-lg border ${selectedCourt?.id === court.id ? 'bg-green-200 ' :
+                        !overlappedBookings.find(booking => booking.courtId === court.id)
+                          ? 'border-green-500 bg-green-50 cursor-pointer hover:bg-green-100 text-black'
+                          : 'border-red-300 bg-red-50 cursor-default'
                         }`}
                     >
                       <div className="text-center">
-                        <span className={1 === 1 ? 'text-green-700' : 'text-red-700'}>
-                          {court.courtNo}
+                        <span className={!overlappedBookings.find(booking => booking.courtId === court.id) ? 'text-green-700' : 'text-red-700'}>
+                          Sân số {court.courtNo}
                         </span>
-                        <p className="text-sm mt-1">
-                          {1 === 1 ? 'Available' : 'Booked'}
+                        <Tooltip id="booking-info-tooltip" place='left' />
+                        <p data-tooltip-id={overlappedBookings.find(booking => booking.courtId === court.id) ? "booking-info-tooltip" : ""}
+                          data-tooltip-content={overlappedBookings.find(booking => booking.courtId === court.id) ? getCourtBookingInfo((court.id)) : ""}
+                          className={`text-sm mt-1 ${!overlappedBookings.find(booking => booking.courtId === court.id) ? 'text-green-700' : 'text-red-700'}`}>
+                          {!overlappedBookings.find(booking => booking.courtId === court.id) ? 'Có thể chọn' : 'Đã đươc đặt'}
                         </p>
                       </div>
                     </div>
@@ -222,25 +304,35 @@ const CenterClient: React.FC<Props> = ({ data }) => {
 
               {/* Booking Summary */}
               <div className="mt-8 border-t pt-6">
-                <h2 className="text-lg font-semibold mb-4">Booking Summary</h2>
+                <h2 className="text-lg font-semibold mb-4">Thông tin đặt sân</h2>
                 <div className="bg-gradient-to-br from-gray-900 to-blue-900 rounded-lg p-4 ">
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-3 gap-4">
                     <div>
-                      <p className="text-sm text-gray-400">Date</p>
+                      <p className="text-sm text-gray-400">Sân</p>
+                      <p className="font-medium">{!selectedCourt ? "Chưa chọn sân" : `Số ${selectedCourt.courtNo}`}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-gray-400">Ngày</p>
                       <p className="font-medium">{format(selectedDate, 'MMMM d, yyyy')}</p>
                     </div>
                     <div>
-                      <p className="text-sm text-gray-400">Time</p>
+                      <p className="text-sm text-gray-400">Giờ</p>
                       <p className="font-medium">
-                        {startTime && endTime ? `${startTime} - ${endTime}` : 'Not selected'}
+                        {startTime && endTime ? `${startTime} - ${endTime}` : 'Chưa chọn giờ'}
                       </p>
                     </div>
                   </div>
                   <button
-                    className="mt-4 w-full bg-indigo-600 text-white py-2 px-4 rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
-                    onClick={() => alert('Booking confirmed!')}
+                    disabled={!startTime || !endTime || !selectedCourt}
+                    className="mt-4 w-full bg-indigo-600 text-white py-2 px-4 rounded-md 
+                    hover:bg-indigo-700 focus:outline-none focus:ring-2 
+                    focus:ring-indigo-500 focus:ring-offset-2 disabled:opacity-45 disabled:cursor-not-allowed 
+                    disabled:hover:bg-indigo-600"
+                    onClick={async () => {
+                      await createBooking()
+                    }}
                   >
-                    Confirm Booking
+                    Tiến hành đặt sân
                   </button>
                 </div>
               </div>
@@ -248,7 +340,7 @@ const CenterClient: React.FC<Props> = ({ data }) => {
           </div>
         </div>
       </div>
-    </div>
+    </div >
   );
 }
 

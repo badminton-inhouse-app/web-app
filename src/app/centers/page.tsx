@@ -1,31 +1,35 @@
 'use client';
 
 import React, { useState } from 'react';
-import axios from 'axios';
 import { CenterCard } from '@/components/centers/CenterCard';
 import { FilterDropdown } from '@/components/centers/FilterDropdown';
 // import { SearchBar } from '@/components/centers/SearchBar';
 import { useQuery } from '@tanstack/react-query';
-import { Center } from '@/types/entities';
+import { Center, GetFiltersValuesResponse } from '@/types/entities';
+import { baseAxios } from '@/services/api/baseAxios';
 
 const Centers = () => {
-    const [selectedDistrict, setSelectedDistrict] = useState('');
-    const [selectedCity, setSelectedCity] = useState('');
-    const { data } = useQuery({
+    const [selectedDistrict,] = useState('');
+    const [selectedCity,] = useState('');
+    const { data: searchCentersData } = useQuery({
         queryKey: ['centers', selectedDistrict, selectedCity],
-        queryFn: () => axios.get('http://localhost:3000/api/centers', {
-            params: {
-                district: selectedDistrict,
-                city: selectedCity,
-            }
-        }).then((res) => res.data),
+        queryFn: async () => {
+            const data = await baseAxios.get('/centers', {
+                params: {
+                    district: selectedDistrict,
+                    city: selectedCity,
+                }
+            })
+            return data;
+        }
     })
-
-    const districts = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11',
-        '12', "Tân Bình", "Tân Phú", "Bình Tân", "Bình Thạnh", "Gò Vấp", "Phú Nhuận",
-        "Thủ Đức", "Nhà Bè", "Hóc Môn", "Cần Giờ"];
-
-    const cities = ['Hồ Chí Minh'];
+    const { data: getFilterValuesData } = useQuery({
+        queryKey: ['centers-filters-values'],
+        queryFn: async () => {
+            const data = await baseAxios.get('/centers/filters/values') as GetFiltersValuesResponse;
+            return data;
+        },
+    })
 
     return (
         <div className="min-h-screen bg-gradient-to-b from-gray-900 via-gray-800 to-gray-900">
@@ -43,29 +47,31 @@ const Centers = () => {
                     <div className="w-full flex gap-8 items-end">
                         {/* <SearchBar value={search} onChange={setSearch} /> */}
 
-                        <FilterDropdown
-                            label="quận"
-                            options={districts}
-                            value={selectedDistrict}
-                            onChange={setSelectedDistrict}
-                        />
-
-                        <FilterDropdown
-                            label="thành phố"
-                            options={cities}
-                            value={selectedCity}
-                            onChange={setSelectedCity}
-                        />
+                        {getFilterValuesData
+                            && getFilterValuesData.data
+                            && Object.keys(getFilterValuesData.data).length > 0 &&
+                            Object.keys(getFilterValuesData?.data || {}).map(key => (
+                                <FilterDropdown
+                                    key={key}
+                                    label={getFilterValuesData?.data?.[key].label || ''}
+                                    options={getFilterValuesData?.data?.[key].values ?? []}
+                                    value={selectedDistrict}
+                                    //TODO: apply dynamic query params using url search params
+                                    onChange={() => { }}
+                                    showTotalItems
+                                    totalItemsTextSurfix='sân'
+                                />
+                            ))}
                     </div>
                 </div>
 
                 <div className="grid gap-8 md:grid-cols-2 lg:grid-cols-3">
-                    {data && data.data.items.map((center: Center) => (
+                    {searchCentersData && searchCentersData.data.items.map((center: Center) => (
                         <CenterCard key={center.id} center={center} />
                     ))}
                 </div>
 
-                {data && data.data.items.length === 0 && (
+                {searchCentersData && searchCentersData.data.items.length === 0 && (
                     <div className="text-center py-16 bg-gray-800/50 backdrop-blur-sm rounded-2xl border border-gray-700">
                         <p className="text-xl text-gray-300 mb-2">Không Tìm Thấy Kết Quả</p>
                         <p className="text-gray-400">
